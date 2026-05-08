@@ -32,6 +32,16 @@ on:
         required: false
         type: boolean
         default: false
+      use_chossica:
+        description: '📲 Upload files to Chossica'
+        required: false
+        type: boolean
+        default: false
+      chossica_password:
+        description: '🔐 Password for Chossica encrypted session'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -175,3 +185,34 @@ jobs:
           git add download/
           git commit -m "Add downloaded archive" || echo "Nothing to commit"
           git push
+
+      # ----- Chossica upload -----
+      - name: 📤 Upload files to Chossica
+        if: github.event.inputs.use_chossica == 'true'
+        run: |
+          echo "Cloning chossica repository..."
+          git clone https://github.com/gudarzi/chossica.git chossica_repo
+          cd chossica_repo
+
+          echo "Setting up Python virtual environment..."
+          sudo apt-get update -qq && sudo apt-get install -y -qq python3-venv
+          python3 -m venv venv
+          source venv/bin/activate
+          pip install -r requirements.txt
+
+          FINAL_DIR="../${FINAL_DIR}"
+          echo "Files in FINAL_DIR ($FINAL_DIR):"
+          ls -lh "$FINAL_DIR"
+
+          # Collect archive volumes (split files)
+          mapfile -t FILES < <(find "$FINAL_DIR" -type f -name 'archive.7z.*' | sort)
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "⚠️ No split volumes found, falling back to all files in $FINAL_DIR"
+            mapfile -t FILES < <(find "$FINAL_DIR" -type f | sort)
+          fi
+
+          echo "Uploading ${#FILES[@]} file(s):"
+          printf '  %s\n' "${FILES[@]}"
+
+          # Non-interactive upload
+          python main.py --password "${{ github.event.inputs.chossica_password }}" "${FILES[@]}"
