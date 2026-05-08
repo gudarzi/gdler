@@ -79,7 +79,29 @@ jobs:
           if [[ "${{ github.event.inputs.use_ytdlp }}" == "true" ]]; then
             echo "Using yt-dlp..."
 
-            yt-dlp --no-part --no-playlist -P tmp_download --js-runtimes node --extractor-args "youtube:player_client=ios,android" "$URL"
+            COOKIE_FILE="/tmp/yt_cookies.txt"
+            COOKIES_ARG=()
+
+            if [ -n "${{ secrets.YOUTUBE_COOKIES }}" ]; then
+              echo "${{ secrets.YOUTUBE_COOKIES }}" > "$COOKIE_FILE"
+              echo "✅ Using cookies from YOUTUBE_COOKIES secret."
+
+              echo "------------ Cookie file diagnostics ------------"
+              echo "File size: $(wc -c < "$COOKIE_FILE") bytes"
+              echo "Line count: $(wc -l < "$COOKIE_FILE")"
+              if head -n 1 "$COOKIE_FILE" | grep -q "Netscape"; then
+                echo "✅ Netscape header found."
+              else
+                echo "⚠️  Netscape header MISSING. The file may not be valid."
+              fi
+              echo "-------------------------------------------------"
+
+              COOKIES_ARG=(--cookies "$COOKIE_FILE")
+            else
+              echo "ℹ️ YOUTUBE_COOKIES secret is empty or not set. If YouTube requires sign-in, the download may fail."
+            fi
+
+            yt-dlp --no-part --no-playlist -P tmp_download --js-runtimes node --extractor-args "youtube:player_client=ios,android" "${COOKIES_ARG[@]}" "$URL"
 
             FILE_COUNT=$(ls tmp_download | wc -l)
 
