@@ -64,7 +64,7 @@ jobs:
       - name: ⚙️ Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y p7zip-full file ffmpeg
+          sudo apt-get install -y p7zip-full file ffmpeg nodejs
           sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
           sudo chmod a+rx /usr/local/bin/yt-dlp
 
@@ -79,7 +79,7 @@ jobs:
           if [[ "${{ github.event.inputs.use_ytdlp }}" == "true" ]]; then
             echo "Using yt-dlp..."
 
-            yt-dlp --no-part --no-playlist -P tmp_download "$URL"
+            yt-dlp --no-part --no-playlist -P tmp_download --js-runtimes node --extractor-args "youtube:player_client=ios,android" "$URL"
 
             FILE_COUNT=$(ls tmp_download | wc -l)
 
