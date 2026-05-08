@@ -1,0 +1,177 @@
+name: 'jjjjjj'
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_url:
+        description: '🔗 Direct file link or video URL'
+        required: true
+        type: string
+      use_ytdlp:
+        description: '🎬 Use yt-dlp (for video pages)'
+        required: false
+        type: boolean
+        default: true
+      password:
+        description: '🔐 Archive password (optional)'
+        required: false
+        type: string
+        default: ''
+      split_size:
+        description: '📦 Split volume size (e.g. 95m, 200m)'
+        required: false
+        type: string
+        default: '5m'
+      clean_download_folder:
+        description: '🗑️ Delete the entire download/ folder before new download'
+        required: false
+        type: boolean
+        default: false
+      use_git_lfs:
+        description: '🐘 Use Git LFS for files >99 MB'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  download-and-commit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🔄 Checkout repository
+        uses: actions/checkout@v4
+
+      # ----- Optional cleanup -----
+      - name: 🗑️ Remove current download/ folder
+        if: github.event.inputs.clean_download_folder == 'true'
+        run: |
+          echo "Deleting download/ folder..."
+          rm -rf download
+
+      - name: ⚙️ Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full file ffmpeg
+          sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
+          sudo chmod a+rx /usr/local/bin/yt-dlp
+
+      - name: 📥 Download file
+        id: download
+        run: |
+          URL="${{ github.event.inputs.file_url }}"
+          echo "Downloading from: $URL"
+
+          mkdir -p tmp_download
+
+          if [[ "${{ github.event.inputs.use_ytdlp }}" == "true" ]]; then
+            echo "Using yt-dlp..."
+
+            yt-dlp --no-part --no-playlist -P tmp_download "$URL"
+
+            FILE_COUNT=$(ls tmp_download | wc -l)
+
+            if [ "$FILE_COUNT" -eq 0 ]; then
+              echo "❌ No files downloaded!"
+              exit 1
+            fi
+
+            if [ "$FILE_COUNT" -gt 1 ]; then
+              echo "⚠️ Multiple files detected, selecting newest..."
+            fi
+
+            FILENAME=$(ls -t tmp_download | head -n 1)
+            FILENAME="tmp_download/$FILENAME"
+
+          else
+            echo "Using curl..."
+
+            curl -LJ -O -w '%{filename_effective}' "$URL" > /tmp/curl_out.txt || true
+            FILENAME=$(tail -n 1 /tmp/curl_out.txt)
+
+            if [ -z "$FILENAME" ] || [ ! -f "$FILENAME" ]; then
+              echo "Fallback to manual filename..."
+              FILENAME=$(basename "$URL" | sed 's/\?.*//')
+              curl -L --fail --retry 5 --retry-delay 5 -o "$FILENAME" "$URL"
+            fi
+
+            mv "$FILENAME" tmp_download/
+            FILENAME="tmp_download/$FILENAME"
+          fi
+
+          echo "✅ Final file: $FILENAME"
+          ls -lh "$FILENAME"
+
+          echo "FILENAME=$FILENAME" >> $GITHUB_ENV
+
+      - name: 🕒 Create unique timestamped folder
+        run: |
+          UNIQUE_TIME=$(date +%Y%m%d%H%M%S)
+          FINAL_DIR="download/$UNIQUE_TIME"
+          echo "FINAL_DIR=$FINAL_DIR" >> $GITHUB_ENV
+          mkdir -p "$FINAL_DIR"
+
+      - name: 🗜️ Compress and split
+        run: |
+          FINAL_DIR="${{ env.FINAL_DIR }}"
+          FILE="${{ env.FILENAME }}"
+
+          rm -f "$FINAL_DIR"/*.7z*
+
+          if [ -z "${{ github.event.inputs.password }}" ]; then
+            7z a -mhe=on -mx=3 -v${{ github.event.inputs.split_size }} "$FINAL_DIR/archive.7z" "$FILE"
+          else
+            7z a -p"${{ github.event.inputs.password }}" -mhe=on -mx=3 -v${{ github.event.inputs.split_size }} "$FINAL_DIR/archive.7z" "$FILE"
+          fi
+
+          echo "✅ Archive created:"
+          ls -lh "$FINAL_DIR"
+
+      # ----- Git LFS -----
+      - name: 🐘 Setup Git LFS if needed
+        if: github.event.inputs.use_git_lfs == 'true'
+        run: |
+          FINAL_DIR="${{ env.FINAL_DIR }}"
+          LARGE_FILES=$(find "$FINAL_DIR" -type f -size +99M)
+
+          if [ -n "$LARGE_FILES" ]; then
+            echo "Large files detected:"
+            echo "$LARGE_FILES"
+
+            if ! command -v git-lfs &> /dev/null; then
+              sudo apt-get update && sudo apt-get install -y git-lfs
+            fi
+
+            git lfs install
+
+            for file in $LARGE_FILES; do
+              git lfs track "$file"
+            done
+
+            git add .gitattributes
+          else
+            echo "No large files."
+          fi
+
+      - name: ⚠️ Check for large files without LFS
+        if: github.event.inputs.use_git_lfs != 'true'
+        run: |
+          FINAL_DIR="${{ env.FINAL_DIR }}"
+          LARGE_FILES=$(find "$FINAL_DIR" -type f -size +99M)
+
+          if [ -n "$LARGE_FILES" ]; then
+            echo "❌ Files exceed GitHub limit:"
+            echo "$LARGE_FILES"
+            exit 1
+          fi
+
+      - name: 📝 Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add download/
+          git commit -m "Add downloaded archive" || echo "Nothing to commit"
+          git push
