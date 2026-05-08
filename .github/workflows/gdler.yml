@@ -80,7 +80,7 @@ jobs:
             echo "Using yt-dlp..."
 
             COOKIE_FILE="/tmp/yt_cookies.txt"
-            COOKIES_ARG=()
+            HAS_COOKIES=false
 
             if [ -n "${{ secrets.YOUTUBE_COOKIES }}" ]; then
               echo "${{ secrets.YOUTUBE_COOKIES }}" > "$COOKIE_FILE"
@@ -96,12 +96,19 @@ jobs:
               fi
               echo "-------------------------------------------------"
 
-              COOKIES_ARG=(--cookies "$COOKIE_FILE")
+              HAS_COOKIES=true
             else
-              echo "ℹ️ YOUTUBE_COOKIES secret is empty or not set. If YouTube requires sign-in, the download may fail."
+              echo "ℹ️ YOUTUBE_COOKIES secret is empty or not set. Will try unauthorised access."
             fi
 
-            yt-dlp --no-part --no-playlist -P tmp_download --js-runtimes node --extractor-args "youtube:player_client=ios,android" "${COOKIES_ARG[@]}" "$URL"
+            # Build the yt-dlp command based on whether we have cookies
+            if [ "$HAS_COOKIES" = true ]; then
+              # With cookies: use default web client (no --extractor-args that break cookies)
+              yt-dlp --no-part --no-playlist -P tmp_download --js-runtimes node --cookies "$COOKIE_FILE" "$URL"
+            else
+              # Without cookies: use mobile clients as a fallback
+              yt-dlp --no-part --no-playlist -P tmp_download --js-runtimes node --extractor-args "youtube:player_client=ios,android" "$URL"
+            fi
 
             FILE_COUNT=$(ls tmp_download | wc -l)
 
